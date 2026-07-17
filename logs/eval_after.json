@@ -1,0 +1,61 @@
+{
+  "tag": "RL-tuned (/kaggle/working/checkpoints/rl_qwen)",
+  "result": {
+    "calc/none": {
+      "accuracy": 1.0,
+      "tool_use": 1.0,
+      "task_reward": 1.0,
+      "chained": 0.0,
+      "mean_gen_tokens": 31.4
+    },
+    "calc/low": {
+      "accuracy": 1.0,
+      "tool_use": 1.0,
+      "task_reward": 1.0,
+      "chained": 0.0,
+      "mean_gen_tokens": 31.4
+    },
+    "calc/medium": {
+      "accuracy": 1.0,
+      "tool_use": 1.0,
+      "task_reward": 1.0,
+      "chained": 0.0,
+      "mean_gen_tokens": 31.4
+    },
+    "calc/high": {
+      "accuracy": 1.0,
+      "tool_use": 1.0,
+      "task_reward": 1.0,
+      "chained": 0.0,
+      "mean_gen_tokens": 31.4
+    },
+    "lookup/none": {
+      "accuracy": 1.0,
+      "tool_use": 1.0,
+      "task_reward": 1.0,
+      "chained": 1.0,
+      "mean_gen_tokens": 25.7
+    },
+    "lookup/low": {
+      "accuracy": 1.0,
+      "tool_use": 1.0,
+      "task_reward": 1.0,
+      "chained": 1.0,
+      "mean_gen_tokens": 25.7
+    },
+    "lookup/medium": {
+      "accuracy": 1.0,
+      "tool_use": 1.0,
+      "task_reward": 1.0,
+      "chained": 1.0,
+      "mean_gen_tokens": 25.7
+    },
+    "lookup/high": {
+      "accuracy": 1.0,
+      "tool_use": 1.0,
+      "task_reward": 1.0,
+      "chained": 1.0,
+      "mean_gen_tokens": 25.7
+    }
+  }
+}
