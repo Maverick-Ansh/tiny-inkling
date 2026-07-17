@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.ipynb_checkpoints/
+# data & artifacts (regenerated / pushed separately)
+data/
+*.bin
+*.idx
+checkpoints/
+*.pt
+*.safetensors
+wandb/
+runs/
+# keep small plots & json logs
+!assets/*.png
+!logs/*.json
+.DS_Store
+.venv/
+env/

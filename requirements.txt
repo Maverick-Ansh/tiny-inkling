@@ -1,0 +1,12 @@
+# Core (Kaggle already ships torch 2.x + CUDA). Pin loosely for portability.
+torch>=2.2
+numpy
+tokenizers>=0.15
+datasets>=2.16
+safetensors
+huggingface_hub
+matplotlib
+# Track B (agentic RL on a small foundation model)
+transformers>=4.44
+accelerate>=0.30
+peft>=0.11

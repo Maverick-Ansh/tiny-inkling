@@ -1,0 +1,12 @@
+[project]
+name = "tiny-inkling"
+version = "0.1.0"
+description = "A small, faithful, heavily-annotated re-implementation of an Inkling / DeepSeek-V3-style MoE transformer, plus an async-GRPO agentic RL post-training loop, trained on 2xT4."
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
