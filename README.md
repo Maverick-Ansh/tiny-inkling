@@ -110,6 +110,17 @@ session reset costs nothing (see `notebook/` once training starts).
 
 ---
 
+## Trained artifacts (Hugging Face Hub)
+
+Checkpoints are pushed here every few minutes during training, which is also the
+resume source after a Kaggle session reset:
+
+| repo | what |
+|---|---|
+| [`AnshVivek/tiny-inkling-pretrain`](https://huggingface.co/AnshVivek/tiny-inkling-pretrain) | Inkling-mini pretrained on TinyStories (`latest.pt` = model+opt+scaler+step) |
+| [`AnshVivek/tiny-inkling-sft`](https://huggingface.co/AnshVivek/tiny-inkling-sft) | Inkling-mini after tool-format SFT |
+| [`AnshVivek/tiny-inkling-rl-qwen`](https://huggingface.co/AnshVivek/tiny-inkling-rl-qwen) | Qwen2.5-0.5B agentic-RL LoRA adapter |
+
 ## Status
 
 This is a live build. See the commit history and `REPORT.md` for what's landed.
