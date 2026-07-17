@@ -44,19 +44,34 @@ from common import append_jsonl
 SYS_TMPL = (
     "You are a precise tool-using assistant. Think briefly, then act.\n"
     "To call a tool, output exactly <tool>name(argument)</tool> and stop; you will "
-    "then be shown <result>...</result>. When you are sure, output the final answer "
-    "as <answer>...</answer>.\n"
+    "then be shown <result>...</result>. When you know the answer, output it as "
+    "<answer>...</answer> and nothing else.\n"
     "Available tool: {tool_desc}\n"
-    "Always use the tool before answering."
+    "Always use the tool before answering. Follow this example exactly:\n{example}"
 )
 TOOL_DESC = {
     "calc": "calc(expression) — evaluates integer arithmetic, e.g. <tool>calc(12*34)</tool>.",
-    "lookup": "lookup(name) — returns the value stored for a name, e.g. <tool>lookup(alice)</tool>.",
+    "lookup": "lookup(name) — returns the value stored for a lowercase name, e.g. <tool>lookup(alice)</tool>.",
+}
+# One-shot demonstrations of the EXACT protocol. A 0.5B model won't reliably invent
+# the <tool>/<answer> format; priming it in-context lets RL optimise *correctness*
+# rather than spend all its signal discovering the syntax.
+ONESHOT = {
+    "calc": (
+        "Q: What is 12 * 34?\n"
+        "<tool>calc(12*34)</tool>\n<result>408</result>\n<answer>408</answer>"
+    ),
+    "lookup": (
+        "Q: Zoe has a pet. Find Zoe's pet, then its city.\n"
+        "<tool>lookup(zoe)</tool>\n<result>fig</result>\n"
+        "<tool>lookup(fig)</tool>\n<result>rome</result>\n<answer>rome</answer>"
+    ),
 }
 
 
 def build_prompt(tok, env_name, question):
-    msgs = [{"role": "system", "content": SYS_TMPL.format(tool_desc=TOOL_DESC[env_name])},
+    msgs = [{"role": "system", "content": SYS_TMPL.format(
+                tool_desc=TOOL_DESC[env_name], example=ONESHOT[env_name])},
             {"role": "user", "content": question}]
     # tokenize=False -> formatted string; then encode to a flat list[int] ourselves
     # (avoids version-dependent return types from apply_chat_template).
@@ -117,18 +132,22 @@ def rollout_group(model, tok, env, task, device, G, max_turns=4, max_new=80, tem
                 continue
             seqs[i] += gen_ids
             mask[i] += [1] * len(gen_ids)            # model-generated -> 1
-            tail = tok.decode(gen_ids)
+            tail = tok.decode(gen_ids)               # THIS turn's text only
             if "</answer>" in tail:
                 done[i] = True
-            else:
-                call = env.last_tool_call(tok.decode(seqs[i]))
+            elif "</tool>" in tail:
+                # a NEW tool call was emitted THIS turn — parse from `tail`, not the
+                # whole transcript, so we never re-execute an already-answered call.
+                call = env.last_tool_call(tail)
                 if call is not None:
                     result = env.run_tool(task, call[0], call[1])
                     inj = tok.encode(f"\n<result>{result}</result>\n", add_special_tokens=False)
                     seqs[i] += inj
                     mask[i] += [0] * len(inj)         # injected by env -> 0
                 else:
-                    done[i] = True                    # neither tool nor answer: stop
+                    done[i] = True
+            else:
+                done[i] = True                        # turn ended (eos/maxlen), no tool/answer
 
     out = []
     for i in range(G):
