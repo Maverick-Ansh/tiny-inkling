@@ -106,7 +106,9 @@ class InklingMoE(nn.Module):
                 continue
             ye = self.routed_experts[e](flat[tok])             # (m, D)
             w = routed_w[tok, slot].unsqueeze(-1).to(ye.dtype)
-            out.index_add_(0, tok, w * ye)
+            # cast to out.dtype: under fp16 autocast expert outputs are Half while the
+            # residual `out` is fp32 — index_add_ requires matching scalar types.
+            out.index_add_(0, tok, (w * ye).to(out.dtype))
 
         # ---- shared experts: always on, weighted by their joint-normalised score ----
         for s in range(self.n_shared):
