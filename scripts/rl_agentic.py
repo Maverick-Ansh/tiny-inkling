@@ -58,8 +58,10 @@ TOOL_DESC = {
 def build_prompt(tok, env_name, question):
     msgs = [{"role": "system", "content": SYS_TMPL.format(tool_desc=TOOL_DESC[env_name])},
             {"role": "user", "content": question}]
-    ids = tok.apply_chat_template(msgs, add_generation_prompt=True, return_tensors=None)
-    return ids
+    # tokenize=False -> formatted string; then encode to a flat list[int] ourselves
+    # (avoids version-dependent return types from apply_chat_template).
+    text = tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False)
+    return tok.encode(text, add_special_tokens=False)
 
 
 @torch.no_grad()
