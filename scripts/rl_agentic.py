@@ -29,6 +29,30 @@ exactly what the importance ratio + IcePop mask in grpo.py exist to correct.
 
 We log the *staleness* (updates since the actor's snapshot) and the *IcePop mask
 fraction* so you can watch the correction working.
+
+────────────────────────────────────────────────────────────────────────────
+Controllable thinking effort (effort-conditioned RL)
+────────────────────────────────────────────────────────────────────────────
+Instead of optimizing task success alone, each rollout optimizes
+
+        R  =  r_task  −  λ · (# generated tokens)
+
+and we VARY λ across rollout groups, pairing each λ with a matching effort
+instruction in the system message ("Effort: low/medium/high"). The pairing is
+what turns a plain length penalty into a *controllable dial*: the model sees
+"Effort: low" exactly when tokens are expensive and "Effort: high" exactly when
+they are free, so the cheapest way to earn reward is to learn the conditional
+policy  π(· | effort)  — deliberate, spelled-out reasoning under "high", terse
+act-immediately behavior under "low". At inference you then set thinking effort
+with one line of system prompt, no extra training.
+
+One GRPO subtlety makes this work: λ is held CONSTANT WITHIN a group. GRPO's
+advantage is group-relative, so a within-group length penalty changes the
+*ranking* of sibling rollouts (a correct 25-token answer now outranks a correct
+90-token one), which is exactly the gradient we want. If λ varied inside a
+group, the whitened advantages would mostly reflect which rollout drew a cheap
+λ — noise, not signal. Only generated tokens count toward the penalty
+(resp_mask==1); prompt and injected <result> tokens are free.
 """
 import os, sys, time, json, math, argparse, threading, queue, random, copy
 sys.path.insert(0, os.path.dirname(__file__))
@@ -69,9 +93,30 @@ ONESHOT = {
 }
 
 
-def build_prompt(tok, env_name, question):
-    msgs = [{"role": "system", "content": SYS_TMPL.format(
-                tool_desc=TOOL_DESC[env_name], example=ONESHOT[env_name])},
+# ───────────────────────── effort levels (the dial we train) ─────────────────────────
+# name -> (λ per generated token, effort line appended to the system message).
+# The two halves MUST move together: a high per-token cost is always presented as
+# "Effort: low" and vice versa — that pairing is what the model learns to read.
+# λ scale sanity check: rollouts here run ~20–120 generated tokens, task reward
+# is in [-0.2, 1.0]. λ=0.006 makes a 100-token rollout pay 0.6 — enough to
+# outrank verbosity even among all-correct groups — while a minimal correct
+# rollout (~20 tok) keeps 0.88 of its reward. Tool use stays worth it at every
+# level: correct-via-tool at low effort ≈ 1.0 − 0.12 vs guessing wrong ≈ −0.2.
+EFFORT = {
+    "high":   (0.0,    "Effort: high. Think out loud and explain your steps before each "
+                       "tool call; being thorough matters more than being brief."),
+    "medium": (0.0015, "Effort: medium. Keep any reasoning to one short remark; don't ramble."),
+    "low":    (0.006,  "Effort: low. Output the bare minimum: tool call, then answer. "
+                       "No explanations."),
+    "none":   (0.0,    ""),   # unconditioned — recovers the pre-effort-control behavior
+}
+
+
+def build_prompt(tok, env_name, question, effort_line=""):
+    sys_msg = SYS_TMPL.format(tool_desc=TOOL_DESC[env_name], example=ONESHOT[env_name])
+    if effort_line:
+        sys_msg += "\n" + effort_line
+    msgs = [{"role": "system", "content": sys_msg},
             {"role": "user", "content": question}]
     # tokenize=False -> formatted string; then encode to a flat list[int] ourselves
     # (avoids version-dependent return types from apply_chat_template).
@@ -107,14 +152,20 @@ def _batch_generate(model, tok, id_lists, device, max_new, stop_strings, tempera
     return res
 
 
-def rollout_group(model, tok, env, task, device, G, max_turns=4, max_new=80, temperature=1.0):
+def rollout_group(model, tok, env, task, device, G, max_turns=4, max_new=80, temperature=1.0,
+                  effort="none"):
     """Roll out G independent completions for one task (a GRPO group).
 
     Returns a list of G dicts: {ids, resp_mask, reward, info}. `resp_mask` is 1 on
     tokens the MODEL generated (assistant turns) and 0 on the prompt and on the
     <result> text the environment injected — we only train on the model's tokens.
+
+    `effort` selects an EFFORT level: its instruction goes into the system message
+    and its λ is charged per generated token, so `reward` = r_task − λ·n_gen.
+    The raw task reward and token count survive in info (task_reward, n_gen).
     """
-    prompt = build_prompt(tok, env.name, task["question"])
+    lam, effort_line = EFFORT[effort]
+    prompt = build_prompt(tok, env.name, task["question"], effort_line)
     seqs = [list(prompt) for _ in range(G)]
     mask = [[0] * len(prompt) for _ in range(G)]     # prompt tokens -> 0
     done = [False] * G
@@ -152,7 +203,10 @@ def rollout_group(model, tok, env, task, device, G, max_turns=4, max_new=80, tem
     out = []
     for i in range(G):
         v = env.verify(task, tok.decode(seqs[i]))
-        out.append({"ids": seqs[i], "resp_mask": mask[i], "reward": v["reward"], "info": v})
+        n_gen = sum(mask[i])                          # model-generated tokens only
+        r = v["reward"] - lam * n_gen                 # R = r_task − λ·(# gen tokens)
+        info = {**v, "task_reward": v["reward"], "n_gen": n_gen, "effort": effort}
+        out.append({"ids": seqs[i], "resp_mask": mask[i], "reward": r, "info": info})
     return out
 
 
@@ -199,9 +253,11 @@ class Actor(threading.Thread):
         while not self.stop_flag.is_set():
             env = self.envs[self.rng.randrange(len(self.envs))]
             task = env.sample_task(self.rng)
+            # one effort level per GROUP (λ constant within the group — see module docstring)
+            effort = self.rng.choice(self.cfg.effort_levels)
             with self.lock:                            # don't generate while syncing weights
                 group = rollout_group(self.model, self.tok, env, task, self.device,
-                                      self.G, temperature=self.cfg.temperature)
+                                      self.G, temperature=self.cfg.temperature, effort=effort)
                 # behavior logprobs under the ACTOR snapshot (this is logπ_behavior)
                 ids, msk = [g["ids"] for g in group], [g["resp_mask"] for g in group]
                 t_ids, t_msk, t_attn = pad_stack(ids, msk, self.tok.pad_token_id, self.device)
@@ -246,6 +302,8 @@ def main():
     ap.add_argument("--icepop_c", type=float, default=2.0)   # IcePop trust band [1/c, c]
     ap.add_argument("--kl_beta", type=float, default=0.02)
     ap.add_argument("--temperature", type=float, default=1.0)
+    ap.add_argument("--efforts", default="low,medium,high",
+                    help="comma-separated EFFORT levels sampled per group; 'none' disables effort control")
     ap.add_argument("--sync_every", type=int, default=4)     # learner steps between actor syncs
     ap.add_argument("--total_steps", type=int, default=600)
     ap.add_argument("--max_minutes", type=float, default=110.0)
@@ -253,6 +311,9 @@ def main():
     ap.add_argument("--hf_repo", default="AnshVivek/tiny-inkling-rl-qwen")
     ap.add_argument("--sync_mode", default="async", choices=["async", "sync"])
     args = ap.parse_args()
+    args.effort_levels = [e.strip() for e in args.efforts.split(",")]
+    for e in args.effort_levels:
+        assert e in EFFORT, f"unknown effort level '{e}' (have {list(EFFORT)})"
     os.makedirs(args.out, exist_ok=True)
 
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -299,8 +360,10 @@ def main():
     def get_group_sync():
         env = envs[rng.randrange(len(envs))]
         task = env.sample_task(rng)
+        effort = rng.choice(args.effort_levels)
         actor.eval()
-        group = rollout_group(actor, tok, env, task, "cuda:1", args.group_size, temperature=args.temperature)
+        group = rollout_group(actor, tok, env, task, "cuda:1", args.group_size,
+                              temperature=args.temperature, effort=effort)
         ids, msk = [g["ids"] for g in group], [g["resp_mask"] for g in group]
         t_ids, t_msk, t_attn = pad_stack(ids, msk, tok.pad_token_id, "cuda:1")
         with torch.no_grad():
@@ -364,8 +427,18 @@ def main():
         infos = [i for g in groups for i in g["infos"]]
         acc = sum(bool(i.get("correct")) for i in infos) / len(infos)
         tool = sum(bool(i.get("used_tool")) for i in infos) / len(infos)
+        task_r = sum(i.get("task_reward", 0.0) for i in infos) / len(infos)
+        # per-effort mean generated tokens + accuracy — the dial we're training.
+        # (a step only touches the efforts its sampled groups drew, so keys vary)
+        eff_tok, eff_acc = {}, {}
+        for e in args.effort_levels:
+            sub = [i for i in infos if i.get("effort") == e]
+            if sub:
+                eff_tok[e] = round(sum(i["n_gen"] for i in sub) / len(sub), 1)
+                eff_acc[e] = round(sum(bool(i.get("correct")) for i in sub) / len(sub), 3)
         rec = dict(step=step, loss=round(float(loss), 4), reward=round(float(rewards.mean()), 3),
-                   acc=round(acc, 3), tool_use=round(tool, 3), staleness=round(float(staleness), 2),
+                   task_reward=round(task_r, 3), acc=round(acc, 3), tool_use=round(tool, 3),
+                   tok=eff_tok, eacc=eff_acc, staleness=round(float(staleness), 2),
                    icepop=round(st["icepop_masked_frac"], 3), kl=round(st["kl"], 4),
                    clip=round(st["clip_frac"], 3), qsize=q.qsize() if args.sync_mode == "async" else 0)
         for k in ("reward", "acc", "tool_use"):

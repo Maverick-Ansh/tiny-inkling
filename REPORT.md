@@ -266,6 +266,52 @@ behaviour.
 Only the `<assistant>` tokens carry loss; the `<result>` the environment produced is
 masked, because the policy isn't responsible for it.
 
+### 4.5 Controllable thinking effort — training a dial, not a policy
+
+Frontier labs make "how long the model thinks" a *user-settable knob*. The recipe
+(as described for effort control in recent frontier models) is not a second model or
+an inference-time trick — it's a small change to the RL objective:
+
+$$R \;=\; r_{\text{task}} \;-\; \lambda \cdot n_{\text{gen}}$$
+
+where $n_{\text{gen}}$ counts only tokens the policy generated (the injected
+`<result>` text is free). Alone, that's just a length penalty: one λ ⇒ one
+compromise length. The trick is to **vary λ across rollout groups and pair each λ
+with a matching instruction in the system message**:
+
+| system message says | λ (per token) | tokens are… |
+|---|---|---|
+| `Effort: high. Think out loud…` | 0.0 | free |
+| `Effort: medium. Keep it brief…` | 0.0015 | cheap |
+| `Effort: low. Bare minimum…` | 0.006 | expensive |
+
+Because the instruction and the price *always co-occur*, the highest-reward policy
+is the **conditional** one: spell out reasoning when the prompt says "high" (it
+costs nothing), act immediately when it says "low" (every token eats reward). The
+model isn't learning "be short" — it's learning to *read the price tag off the
+system message*. After training, thinking effort is one line of prompt.
+
+Two implementation details matter:
+
+1. **λ is constant within a GRPO group.** The group-relative advantage
+   $A_i = (R_i - \bar R)/\sigma_R$ only sees *within-group differences*. With a
+   shared λ, a correct 25-token rollout now outranks its correct 90-token sibling —
+   precisely the compression gradient we want, applied *only where the effort level
+   asks for it* (λ=0 groups feel no length pressure at all). If λ varied inside a
+   group, advantages would mostly measure who drew the cheap λ — noise.
+2. **The penalty must not flip the tool-use economics.** At λ=0.006 a minimal
+   correct tool-using rollout (~20 tokens) keeps `1.0 − 0.12 = 0.88`, while
+   skipping the tool and guessing wrong scores `−0.2`. Compression pressure never
+   makes cheating optimal — it only prunes verbosity around the same correct
+   behavior.
+
+Measurement: `eval_agentic.py` sweeps `--efforts none,low,medium,high` over the
+*same* greedy task suite and reports accuracy + mean generated tokens per level;
+`assets/rl_effort.png` tracks per-effort token spend during training. Success looks
+like a **fan-out**: the three lines start together (the base model only weakly
+obeys the instruction) and separate as RL binds the instruction to the price —
+with accuracy holding at medium/high and degrading gracefully, if at all, at low.
+
 ---
 
 ## 5. Results

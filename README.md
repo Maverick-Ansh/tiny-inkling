@@ -76,9 +76,14 @@ The loop, in one breath:
 5. Because the actor runs **asynchronously** with slightly **stale** weights, we
    apply an **importance-ratio correction with IcePop-style masking** to stay
    stable off-policy. → [`scripts/rl_agentic.py`](scripts/rl_agentic.py)
+6. **Controllable thinking effort:** each group optimizes
+   `R = r_task − λ·(#generated tokens)` with λ *varied across groups* and paired
+   with a matching `Effort: low/medium/high` line in the system message — so the
+   model learns a prompt-settable dial for how much it thinks, the same recipe
+   frontier labs use for effort control. → [REPORT.md §4.5](REPORT.md)
 
-The math (GRPO objective, the group-advantage estimator, and the async off-policy
-correction) is derived in **[REPORT.md §RL](REPORT.md)**.
+The math (GRPO objective, the group-advantage estimator, the async off-policy
+correction, and effort-conditioned rewards) is derived in **[REPORT.md §RL](REPORT.md)**.
 
 ---
 
@@ -97,8 +102,10 @@ python scripts/prepare_data.py
 python scripts/pretrain.py            # DDP over both T4s, fp16
 python scripts/sft.py                 # teach the tool-call format
 
-# 3) Track B — agentic RL (the point)
-python scripts/rl_agentic.py --base Qwen/Qwen2.5-0.5B-Instruct
+# 3) Track B — agentic RL (the point); effort-controlled reward is on by default
+python scripts/rl_agentic.py --base Qwen/Qwen2.5-0.5B-Instruct --efforts low,medium,high
+#    measure the effort dial (before: omit --adapter; after: point at the ckpt)
+python scripts/eval_agentic.py --adapter checkpoints/rl_qwen --efforts none,low,medium,high
 
 # 4) stretch — Bonsai-style ternary {-1,0,+1} quantization of Inkling-mini
 python scripts/quantize_bonsai.py

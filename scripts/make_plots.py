@@ -5,6 +5,8 @@ Reads whatever logs exist and writes PNGs into assets/:
   * pretrain_balance.png     — MoE load-max/mean ratio over training (balancing at work)
   * rl_reward.png            — agentic RL: reward / accuracy / tool-use over steps
   * rl_offpolicy.png         — IcePop masked-fraction and staleness over steps
+  * rl_effort.png            — the effort dial: per-effort generated tokens (should
+                               fan out: low compresses, high stays roomy) + accuracy
 """
 import os, sys, json, glob, argparse
 import matplotlib
@@ -92,6 +94,32 @@ def plot_rl(logdir, outdir):
     plt.grid(alpha=0.3); plt.tight_layout()
     plt.savefig(os.path.join(outdir, "rl_offpolicy.png"), dpi=120); plt.close()
     print("wrote rl_offpolicy.png")
+
+    # ---- the effort dial: per-effort token spend (top) and accuracy (bottom) ----
+    # Each step only logs the efforts its sampled groups drew, so each line has its
+    # own x-axis. EMA over ~30 points smooths the group-to-group task variance.
+    EFF_ORDER = ["low", "medium", "high", "none"]
+    EFF_COLOR = {"low": "#C44E52", "medium": "#DD8452", "high": "#4C72B0", "none": "#8172B3"}
+    if any(r.get("tok") for r in rows):
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7, 6), sharex=True)
+        for eff in EFF_ORDER:
+            pts_t = [(r["step"], r["tok"][eff]) for r in rows if eff in r.get("tok", {})]
+            pts_a = [(r["step"], r["eacc"][eff]) for r in rows if eff in r.get("eacc", {})]
+            if not pts_t:
+                continue
+            ax1.plot([p[0] for p in pts_t], ema([p[1] for p in pts_t], 0.06),
+                     color=EFF_COLOR[eff], label=f"effort={eff}")
+            if pts_a:
+                ax2.plot([p[0] for p in pts_a], ema([p[1] for p in pts_a], 0.06),
+                         color=EFF_COLOR[eff], label=f"effort={eff}")
+        ax1.set_ylabel("generated tokens / rollout (EMA)")
+        ax1.set_title("Effort dial: R = r_task − λ·tokens, λ paired with the system message")
+        ax1.legend(); ax1.grid(alpha=0.3)
+        ax2.set_ylabel("accuracy (EMA)"); ax2.set_xlabel("learner step")
+        ax2.set_ylim(-0.05, 1.05); ax2.grid(alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(os.path.join(outdir, "rl_effort.png"), dpi=120); plt.close(fig)
+        print("wrote rl_effort.png")
 
 
 def main():
