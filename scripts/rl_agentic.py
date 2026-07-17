@@ -217,9 +217,14 @@ class Actor(threading.Thread):
                 pass                                    # learner is behind; drop (backpressure)
 
     def sync_from(self, learner_state, version):
-        """Load fresh LoRA weights from the learner (called by the main thread)."""
+        """Load fresh LoRA weights from the learner (called by the main thread).
+
+        MUST use set_peft_model_state_dict — the keys from get_peft_model_state_dict
+        omit the adapter name ('.default'), so a plain load_state_dict(strict=False)
+        would match nothing and the actor would silently never update."""
+        from peft import set_peft_model_state_dict
         with self.lock:
-            self.model.load_state_dict(learner_state, strict=False)
+            set_peft_model_state_dict(self.model, learner_state)
             self.snapshot_version = version
 
 
@@ -260,13 +265,17 @@ def main():
                       target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
                                       "gate_proj", "up_proj", "down_proj"])
 
-    # policy on cuda:0 (trainable), actor on cuda:1 (eval snapshot)
+    # LEARNER policy on cuda:0 in fp32 — training LoRA in fp16 without loss-scaling
+    # underflows over a long run; fp32 is stable and a 0.5B base fits easily.
     policy = get_peft_model(
-        AutoModelForCausalLM.from_pretrained(args.base, torch_dtype=torch.float16).to("cuda:0"), lcfg)
+        AutoModelForCausalLM.from_pretrained(args.base, torch_dtype=torch.float32).to("cuda:0"), lcfg)
     policy.print_trainable_parameters()
+    # ACTOR on cuda:1 in fp16 — generation only, so speed matters and stability doesn't.
     actor = get_peft_model(
         AutoModelForCausalLM.from_pretrained(args.base, torch_dtype=torch.float16).to("cuda:1"), lcfg)
-    actor.load_state_dict(policy.state_dict())        # start in sync
+    # initial sync: copy policy's (fp32) weights into the actor (cast to fp16 on copy)
+    from peft import set_peft_model_state_dict
+    set_peft_model_state_dict(actor, lora_state_on(policy, "cuda:1"))
 
     opt = torch.optim.AdamW([p for p in policy.parameters() if p.requires_grad],
                             lr=args.lr, betas=(0.9, 0.95), weight_decay=0.0)
@@ -348,7 +357,8 @@ def main():
             if args.sync_mode == "async":
                 actor_thread.sync_from(new_state, cur_version)
             else:
-                actor.load_state_dict(new_state, strict=False)
+                from peft import set_peft_model_state_dict
+                set_peft_model_state_dict(actor, new_state)
 
         # ---- metrics ----
         infos = [i for g in groups for i in g["infos"]]
