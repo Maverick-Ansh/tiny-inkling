@@ -305,6 +305,13 @@ def main():
     ap.add_argument("--efforts", default="low,medium,high",
                     help="comma-separated EFFORT levels sampled per group; 'none' disables effort control")
     ap.add_argument("--sync_every", type=int, default=4)     # learner steps between actor syncs
+    # Learner microbatch (sequences per forward/backward). The full batch's logits
+    # are (N, T, 151k-vocab) fp32 — at N=16, T~500 that's ~5 GB, ×2 for the
+    # log_softmax copy, + the no-grad reference forward → OOM on a 14.5 GB T4
+    # (this exact OOM killed the first run). Chunking bounds peak memory; the
+    # per-chunk losses are recombined with response-token weights, so the update
+    # is mathematically identical to the full-batch one.
+    ap.add_argument("--learner_chunk", type=int, default=4)
     ap.add_argument("--total_steps", type=int, default=600)
     ap.add_argument("--max_minutes", type=float, default=110.0)
     ap.add_argument("--out", default="/kaggle/working/checkpoints/rl_qwen")
@@ -398,17 +405,31 @@ def main():
             row += n
         b_logp = b_logp.to("cuda:0")
 
-        # ---- learner forward: current-policy and reference logprobs ----
+        # ---- learner forward/backward, microbatched over sequences ----
+        # Each chunk's loss is a masked mean over ITS response tokens; weighting by
+        # (chunk resp tokens / total resp tokens) and summing reproduces the exact
+        # full-batch masked mean:  Σ_c [sum_c(x·m)/M_c] · [M_c/M]  =  sum(x·m)/M.
+        # backward() per chunk frees that chunk's activation graph before the next.
         policy.train()
-        n_logp = seq_logprobs(policy, ids, attn, use_adapter=True)          # logπ_θ  (grad)
-        with torch.no_grad():
-            r_logp = seq_logprobs(policy, ids, attn, use_adapter=False)     # logπ_ref
-        rmask = resp_mask[:, 1:]                                            # align with (T-1) logprobs
-
-        loss, st = grpo_loss(n_logp, b_logp, adv, rmask, clip_eps=args.clip_eps,
-                             icepop_c=args.icepop_c, logp_ref=r_logp, kl_beta=args.kl_beta)
         opt.zero_grad(set_to_none=True)
-        loss.backward()
+        total_resp = float(resp_mask[:, 1:].sum())
+        loss_val = 0.0
+        st = {"pg_loss": 0.0, "kl": 0.0, "ratio_mean": 0.0,
+              "icepop_masked_frac": 0.0, "clip_frac": 0.0}
+        for s in range(0, ids.shape[0], args.learner_chunk):
+            sl = slice(s, s + args.learner_chunk)
+            n_logp = seq_logprobs(policy, ids[sl], attn[sl], use_adapter=True)      # logπ_θ (grad)
+            with torch.no_grad():
+                r_logp = seq_logprobs(policy, ids[sl], attn[sl], use_adapter=False) # logπ_ref
+            rmask = resp_mask[sl, 1:]                       # align with (T-1) logprobs
+            w = float(rmask.sum()) / (total_resp + 1e-8)    # this chunk's share of resp tokens
+            loss_c, st_c = grpo_loss(n_logp, b_logp[sl], adv[sl], rmask,
+                                     clip_eps=args.clip_eps, icepop_c=args.icepop_c,
+                                     logp_ref=r_logp, kl_beta=args.kl_beta)
+            (loss_c * w).backward()
+            loss_val += float(loss_c.detach()) * w
+            for k in st:
+                st[k] += st_c[k] * w
         torch.nn.utils.clip_grad_norm_([p for p in policy.parameters() if p.requires_grad], 1.0)
         opt.step()
 
@@ -436,7 +457,7 @@ def main():
             if sub:
                 eff_tok[e] = round(sum(i["n_gen"] for i in sub) / len(sub), 1)
                 eff_acc[e] = round(sum(bool(i.get("correct")) for i in sub) / len(sub), 3)
-        rec = dict(step=step, loss=round(float(loss), 4), reward=round(float(rewards.mean()), 3),
+        rec = dict(step=step, loss=round(loss_val, 4), reward=round(float(rewards.mean()), 3),
                    task_reward=round(task_r, 3), acc=round(acc, 3), tool_use=round(tool, 3),
                    tok=eff_tok, eacc=eff_acc, staleness=round(float(staleness), 2),
                    icepop=round(st["icepop_masked_frac"], 3), kl=round(st["kl"], 4),
