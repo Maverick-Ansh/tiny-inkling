@@ -1,0 +1,61 @@
+{
+  "tag": "BASE (before RL)",
+  "result": {
+    "calc/none": {
+      "accuracy": 0.96,
+      "tool_use": 1.0,
+      "task_reward": 0.966,
+      "chained": 0.0,
+      "mean_gen_tokens": 31.4
+    },
+    "calc/low": {
+      "accuracy": 0.0,
+      "tool_use": 1.0,
+      "task_reward": 0.15,
+      "chained": 0.0,
+      "mean_gen_tokens": 27.4
+    },
+    "calc/medium": {
+      "accuracy": 0.98,
+      "tool_use": 1.0,
+      "task_reward": 0.983,
+      "chained": 0.0,
+      "mean_gen_tokens": 31.4
+    },
+    "calc/high": {
+      "accuracy": 0.78,
+      "tool_use": 1.0,
+      "task_reward": 0.813,
+      "chained": 0.0,
+      "mean_gen_tokens": 31.5
+    },
+    "lookup/none": {
+      "accuracy": 0.96,
+      "tool_use": 1.0,
+      "task_reward": 0.972,
+      "chained": 1.0,
+      "mean_gen_tokens": 25.8
+    },
+    "lookup/low": {
+      "accuracy": 0.0,
+      "tool_use": 1.0,
+      "task_reward": 0.3,
+      "chained": 1.0,
+      "mean_gen_tokens": 18.8
+    },
+    "lookup/medium": {
+      "accuracy": 0.9,
+      "tool_use": 1.0,
+      "task_reward": 0.93,
+      "chained": 1.0,
+      "mean_gen_tokens": 23.7
+    },
+    "lookup/high": {
+      "accuracy": 0.68,
+      "tool_use": 1.0,
+      "task_reward": 0.776,
+      "chained": 1.0,
+      "mean_gen_tokens": 29.6
+    }
+  }
+}
