@@ -133,7 +133,9 @@ def main():
         scaler.update()
 
         if is_main and step % args.log_every == 0:
-            tok_per_s = (args.micro_bs * args.seq_len * args.grad_accum * world) / (time.time() - t0 + 1e-9)
+            # tokens processed over the whole interval since the last log (log_every steps)
+            interval_tokens = args.micro_bs * args.seq_len * args.grad_accum * world * args.log_every
+            tok_per_s = interval_tokens / (time.time() - t0 + 1e-9)
             stats = raw.moe_stats()
             rec = dict(step=step, loss=round(loss_acc, 4), lr=round(lr, 6),
                        tok_s=int(tok_per_s), **{k: round(v, 3) for k, v in stats.items()})
