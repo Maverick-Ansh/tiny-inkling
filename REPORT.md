@@ -270,13 +270,41 @@ masked, because the policy isn't responsible for it.
 
 ## 5. Results
 
-*(filled in from the live runs — see `assets/` for plots and `logs/` for raw JSONL.)*
+Runs on Kaggle 2×T4, fp16. Plots in `assets/`, raw metrics in the checkpoint dirs'
+`*_log.jsonl`.
 
-- **Track A (Inkling-mini pretrain):** validation loss curve, expert-load balance
-  over training, RelPos length-extrapolation check.
-- **Track B (agentic RL on Qwen2.5-0.5B):** reward / tool-use-accuracy curves,
-  IcePop-masked-fraction and staleness traces, before/after tool-use success.
-- **Bonsai ternary:** size and perplexity trade-off table + plot.
+### Track A — Inkling-mini (from scratch)
+- **Model:** 57.6M parameters total, **19.3M active/token** (top-6 of 32 experts +
+  2 shared, per MoE layer). ~3× the "dense-equivalent-of-active" capacity for the
+  active FLOPs.
+- **Pretraining (TinyStories, ~460 steps ≈ 30M tokens in the time-box):** train loss
+  **9.10 → 3.25** (val 3.25). Steady, stable descent under Muon+Adam with the wd∝lr²
+  coupling — no loss spikes in fp16.
+- **Aux-loss-free balancing works:** the max-expert-load / mean-load ratio fell from
+  **3.13 at init to ≈1.18–1.25**, with **zero dead experts** throughout — the bias
+  control loop balances the experts *without* any auxiliary loss term.
+- **RelPos extrapolation:** forwarding at 2× the trained length produces finite,
+  well-behaved logits with no code change (Shaw clipping, verified in the smoke test).
+- **Generation:** at loss 3.25 the model produces on-topic TinyStories vocabulary and
+  story scaffolding ("Once upon a time,", named characters, park/dog/tree motifs) but
+  not yet fluent syntax — honestly, that's an undertraining artifact of the few-hour,
+  MoE-python-loop-bottlenecked budget, not an architectural limit; the loss was still
+  falling when we stopped to hand the GPUs to the RL centerpiece.
+
+### Track B — agentic RL on Qwen2.5-0.5B (the centerpiece)
+*(reward / accuracy / tool-use curves + IcePop/staleness traces — see below and
+`assets/rl_reward.png`, `assets/rl_offpolicy.png`; before/after tool-use table from
+`eval_agentic.py`.)*
+
+We validated the loop qualitatively before the full run: with one-shot format
+priming the base model already chains tools correctly on easy cases
+(`lookup(dave)→milo→lookup(milo)→delhi→<answer>delhi</answer>`), while harder cases
+fail on argument typos (`lookup(gziggy)`), giving the within-group reward spread
+(0.25–1.0) that GRPO turns into advantage.
+
+### Bonsai ternary
+*(size and perplexity trade-off — `assets/bonsai_ternary.png`, numbers in
+`assets/bonsai_ternary.json`.)*
 
 ## 6. Bonsai 1.58-bit ternary quantization
 
