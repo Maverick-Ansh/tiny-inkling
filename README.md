@@ -141,3 +141,15 @@ Runs on Kaggle's free 2×T4; fp16 is **forced** (T4 has no bf16).
 - GRPO (DeepSeekMath) + IcePop-style off-policy masking for async RL
 
 *Built as a learning project — small scale, real mechanisms.*
+
+---
+
+## Run it yourself
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Maverick-Ansh/tiny-inkling/blob/main/notebook/tiny_inkling_run.ipynb)
+
+[`notebook/tiny_inkling_run.ipynb`](notebook/tiny_inkling_run.ipynb) is the full orchestration:
+setup → smoke test → autonomous run (before-eval → effort-controlled RL → after-eval →
+plots → push). Built for a **2× T4** backend (Kaggle free tier); the last cell is a
+single-GPU **effort-dial playground** — same question answered at `Effort: low/medium/high`
+with the published LoRA adapter, so you can watch the system message set the token budget.
