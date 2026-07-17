@@ -452,8 +452,11 @@ def main():
             policy.save_pretrained(args.out)
             try:
                 from huggingface_hub import HfApi
-                HfApi(token=os.environ.get("HF_TOKEN")).upload_folder(
-                    folder_path=args.out, repo_id=args.hf_repo, repo_type="model")
+                api = HfApi(token=os.environ.get("HF_TOKEN"))
+                # upload_folder does NOT create the repo — last run lost all pushes
+                # to a silent RepoNotFound here. Create idempotently first.
+                api.create_repo(args.hf_repo, repo_type="model", exist_ok=True)
+                api.upload_folder(folder_path=args.out, repo_id=args.hf_repo, repo_type="model")
             except Exception as e:
                 print("hf push warn:", e)
 
