@@ -488,6 +488,11 @@ def main():
     stop_flag.set()
     policy.save_pretrained(args.out)
     print("DONE. final ema:", {k: round(v, 3) for k, v in ema.items()}, flush=True)
+    if actor_thread is not None:
+        # the daemon actor may be mid-generate; normal interpreter teardown yanks
+        # CUDA out from under it -> SIGABRT ("terminate called without an active
+        # exception") and a bogus nonzero exit. Everything is saved; exit hard.
+        os._exit(0)
 
 
 if __name__ == "__main__":
