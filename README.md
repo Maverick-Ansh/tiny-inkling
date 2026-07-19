@@ -1,5 +1,9 @@
 # tiny-inkling
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Maverick-Ansh/tiny-inkling/blob/main/notebook/tiny_inkling_run.ipynb)
+[![Report](https://img.shields.io/badge/read-REPORT.md-blue)](REPORT.md)
+[![HF checkpoints](https://img.shields.io/badge/%F0%9F%A4%97-checkpoints-yellow)](https://huggingface.co/AnshVivek/tiny-inkling-rl-qwen)
+
 A small, **heavily-annotated** re-implementation of an *Inkling*-style
 Mixture-of-Experts transformer (the recipe closely follows **DeepSeek-V3**), plus
 the part I actually care about: an **asynchronous GRPO agentic-RL** post-training
