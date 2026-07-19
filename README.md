@@ -142,6 +142,11 @@ resume source after a Kaggle session reset:
   fan-out** — after RL, generated length is identical at every effort level
   (entropy collapse in all-correct GRPO groups kills the length gradient).
   Before/after table and post-mortem in [REPORT.md §5](REPORT.md).
+- **Bonsai ternary (stretch):** post-training 1.58-bit quant of Inkling-mini is
+  **6.6× smaller and catastrophic** — per-token KL(fp16‖ternary) ≈ 4 nats.
+  Ternary is a training regime, not a compression codec ([REPORT.md §6](REPORT.md)
+  — including why this is measured on the model's own samples: the pretrain
+  tokenizer was lost to an ephemeral disk, a lesson now baked into the runbook).
 
 Runs on Kaggle's free 2×T4; fp16 is **forced** (T4 has no bf16).
 

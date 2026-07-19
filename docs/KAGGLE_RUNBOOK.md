@@ -28,10 +28,18 @@ os.environ['HF_TOKEN'] = UserSecretsClient().get_secret('HF_TOKEN')
 
 ## 1. Data (once, ~20 min, CPU)
 ```python
-# download TinyStoriesV2 (background), then:
+# download TinyStoriesV2 — WAIT for it to finish before training the tokenizer
 !python scripts/train_tokenizer.py --sample_lines 1500000     # ~40 s, 8k BPE
 !python scripts/prepare_data.py                               # tokenize -> uint16 memmap (~540M tokens)
+# the tokenizer IS part of the checkpoint — push it with the weights, always:
+from huggingface_hub import HfApi
+HfApi().upload_file(path_or_fileobj='/kaggle/working/tok/tiny8k.json',
+    path_in_repo='tiny8k.json', repo_id='<user>/tiny-inkling-pretrain')
 ```
+> **Hard-learned:** a checkpoint without its tokenizer can never encode new text
+> again. BPE retraining is only reproducible if the corpus file is *complete and
+> identical* — training the tokenizer while the download is still running bakes an
+> arbitrary file prefix into the merges, unrecoverably (see REPORT §6).
 
 ## 2. Track A — pretrain Inkling-mini (both GPUs, DDP fp16)
 ```python

@@ -417,14 +417,62 @@ or an entropy bonus), so the length term keeps producing a gradient after the
 task is solved. That's the follow-up experiment this result motivates.
 
 ### Bonsai ternary
-*(size and perplexity trade-off — `assets/bonsai_ternary.png`, numbers in
-`assets/bonsai_ternary.json`.)*
+
+Post-training absmean ternarization of Inkling-mini (94.2% of weights → {-1,0,+1}):
+**6.61× smaller (115.2 → 17.4 MB), and the model is essentially destroyed** — +2.0
+nats NLL on its own samples (6.77 → 8.79, +29.8%) and a mean per-token
+**KL(fp16 ‖ ternary) of 3.95 nats**. Details, and why this run is measured on the
+model's *own* distribution rather than val text, in §6.
 
 ## 6. Bonsai 1.58-bit ternary quantization
 
 Post-training absmean ternary quant `{-1,0,+1}·γ`, `γ = mean(|W|)`, on the matmul
 weights (embeddings/norms/router kept fp16). "1.58 bit" = `log₂3`. This is the honest,
-no-retraining cost: how small, how much worse. Numbers in `assets/bonsai_ternary.json`.
+no-retraining cost: how small, how much worse. Numbers in `assets/bonsai_ternary.json`,
+plot in `assets/bonsai_ternary.png`.
+
+**Results** (54.3M of 57.6M params ternarized; 3.3M kept fp16):
+
+| | fp16 | ternary (1.58b) |
+|---|---:|---:|
+| size | 115.2 MB | **17.4 MB** (6.61×) |
+| NLL on self-samples (nats/tok) | 6.77 | 8.79 (**+29.8%**) |
+| KL(fp16 ‖ ternary), nats/tok | — | **3.95** |
+
+The verdict is unambiguous: at 57M scale, *post-training* ternarization with no
+quantization-aware finetuning **wrecks the model**. A KL of ~4 nats per token means
+the ternary model's next-token distribution barely overlaps the original's — this
+is not "slightly worse", it's a different (and broken) model that happens to share
+a skeleton. That is consistent with the BitNet literature: b1.58 models are
+*trained* ternary from scratch; ternary is a training regime, not a compression
+codec you can apply afterwards. The 6.61× size win is real, but here you pay for
+it with the model.
+
+**Why self-distribution instead of val perplexity — a lesson in artifact hygiene.**
+The original plan was fp16-vs-ternary perplexity on TinyStories validation text.
+That measurement is *permanently unavailable* for this checkpoint: the 8k BPE
+tokenizer that defined the model's token ids lived only in Kaggle's ephemeral
+`/kaggle/working` and was never pushed to the Hub. Retraining the tokenizer from
+the documented command does **not** reproduce it — the original was trained while
+the 2.2 GB corpus file was still mid-download, so its BPE sample was an arbitrary
+prefix of the file; a sweep over plausible sample sizes (0.5M–10M lines) got no
+closer than val loss ≈ 6.2 against the checkpoint's recorded 3.246. One inserted
+or deleted merge early in the BPE ranking shifts every later token id and scrambles
+94% of the vocabulary. Consequence: the pretrain/SFT checkpoints can still
+*generate* (ids → ids) and be evaluated on their own distribution, but can never
+again *encode new text*. The fix costs one line — push `tok/*.json` next to
+`latest.pt` — and the tokenizer is now part of the checkpoint contract in the
+runbook. (Track B is unaffected: Qwen's tokenizer ships with the model on the Hub.)
+
+Measurement protocol, given that constraint: sample 64 sequences × 256 tokens from
+the fp16 model (temp 1.0, fixed seed), then score *those exact sequences* under
+fp16 and under ternary weights — by construction on-distribution, tokenizer-free,
+and the per-token KL between the two output distributions is computed on the same
+contexts. One extra honest number falls out: the fp16 model's NLL on its own
+free-running samples is **6.77 nats** vs **3.25** on real validation text — a
+direct measure of how far this undertrained 57M model drifts off its own
+competence when it generates unconditionally (compounding sampling error), which
+is worth knowing before reading anything else into the absolute numbers.
 
 ## 7. How it ran (2× T4, free tier)
 
