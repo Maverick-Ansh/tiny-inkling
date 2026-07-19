@@ -128,9 +128,21 @@ resume source after a Kaggle session reset:
 | [`AnshVivek/tiny-inkling-sft`](https://huggingface.co/AnshVivek/tiny-inkling-sft) | Inkling-mini after tool-format SFT |
 | [`AnshVivek/tiny-inkling-rl-qwen`](https://huggingface.co/AnshVivek/tiny-inkling-rl-qwen) | Qwen2.5-0.5B agentic-RL LoRA adapter |
 
-## Status
+## Results (TL;DR)
 
-This is a live build. See the commit history and `REPORT.md` for what's landed.
+- **Track A — Inkling-mini pretrain:** loss **9.10 → 3.25** on TinyStories;
+  aux-loss-free balancing drove expert load max/mean from 3.13 → ≈1.2 with
+  **zero dead experts**; Shaw RelPos extrapolates to 2× the trained length.
+- **Track B — async GRPO agentic RL (470 steps, 2×T4):** **accuracy 1.00 at every
+  effort level on both tool environments** — repairing the base model's
+  effort-line failures (`Effort: low` 0.00→1.00 on both envs, `Effort: high`
+  0.78/0.68→1.00). Async stayed stable: IcePop masked ≤2.7% of tokens at
+  staleness 2–6 steps.
+- **Honest null:** the effort dial repaired robustness but produced **no token
+  fan-out** — after RL, generated length is identical at every effort level
+  (entropy collapse in all-correct GRPO groups kills the length gradient).
+  Before/after table and post-mortem in [REPORT.md §5](REPORT.md).
+
 Runs on Kaggle's free 2×T4; fp16 is **forced** (T4 has no bf16).
 
 ## Credits / reading

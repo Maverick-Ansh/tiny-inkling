@@ -312,6 +312,13 @@ like a **fan-out**: the three lines start together (the base model only weakly
 obeys the instruction) and separate as RL binds the instruction to the price —
 with accuracy holding at medium/high and degrading gracefully, if at all, at low.
 
+**What actually happened** (details in §5, Track B): the fan-out never came.
+Training *repaired* accuracy to 1.00 at every effort level — including two failure
+modes the base model had at the dial's ends — but token counts converged to a
+single effort-invariant length per task. The post-mortem (entropy collapse inside
+all-correct GRPO groups) is in §5; it says something real about *when* this recipe
+can and cannot produce a dial.
+
 ---
 
 ## 5. Results
@@ -338,15 +345,76 @@ Runs on Kaggle 2×T4, fp16. Plots in `assets/`, raw metrics in the checkpoint di
   falling when we stopped to hand the GPUs to the RL centerpiece.
 
 ### Track B — agentic RL on Qwen2.5-0.5B (the centerpiece)
-*(reward / accuracy / tool-use curves + IcePop/staleness traces — see below and
-`assets/rl_reward.png`, `assets/rl_offpolicy.png`; before/after tool-use table from
-`eval_agentic.py`.)*
 
-We validated the loop qualitatively before the full run: with one-shot format
-priming the base model already chains tools correctly on easy cases
+**Run:** 470 learner steps in a ~110-minute box — learner fp32 on GPU 0, background
+stale actor fp16 on GPU 1. Final EMAs: **accuracy 0.997, reward 0.921, tool-use
+1.00** (`assets/rl_reward.png`; per-step metrics in `logs/rl_log.jsonl`). Raw batch
+accuracy first hit 0.95 at step ~25; the EMA crossed it around step ~150 and never
+came back down.
+
+Before the run we validated the loop qualitatively: with one-shot format priming
+the base model already chains tools correctly on easy cases
 (`lookup(dave)→milo→lookup(milo)→delhi→<answer>delhi</answer>`), while harder cases
 fail on argument typos (`lookup(gziggy)`), giving the within-group reward spread
 (0.25–1.0) that GRPO turns into advantage.
+
+**Async stability (`assets/rl_offpolicy.png`):** actor staleness oscillated between
+2–6 learner steps (mean 3.7, max 8). The IcePop mask was a seatbelt, not a crutch:
+it fired on only **4.7% of steps**, masking at most **2.7% of tokens** when it did
+(mean over the run: 0.02%). The PPO ratio clip was active on 72/472 steps. KL to
+the frozen reference settled around **0.05**. Reading: at this scale — LoRA-only
+updates plus an actor that re-syncs every couple of steps — the policy never drifts
+far enough for staleness to bite hard, but the two spike-catching mechanisms are
+exactly what absorbed the moments it did.
+
+**The effort dial, before → after** (greedy decode, 50 tasks/env, same seed suite;
+`logs/eval_before.json`, `logs/eval_after.json`):
+
+| env / effort | acc before | acc after | gen tokens before | gen tokens after |
+|---|---:|---:|---:|---:|
+| calc / none | 0.96 | **1.00** | 31.4 | 31.4 |
+| calc / low | **0.00** | **1.00** | 27.4 | 31.4 |
+| calc / medium | 0.98 | **1.00** | 31.4 | 31.4 |
+| calc / high | **0.78** | **1.00** | 31.5 | 31.4 |
+| lookup / none | 0.96 | **1.00** | 25.8 | 25.7 |
+| lookup / low | **0.00** | **1.00** | 18.8 | 25.7 |
+| lookup / medium | 0.90 | **1.00** | 23.7 | 25.7 |
+| lookup / high | **0.68** | **1.00** | 29.6 | 25.7 |
+
+Two findings, one win and one honest null:
+
+1. **Robustness repair (the win).** Before RL the effort line was a *liability* at
+   both ends. At `Effort: low` the base model obeys "bare minimum" so literally it
+   drops the `<answer>` protocol — accuracy **0.00** on both envs while tool-use
+   stays 1.0 (it still calls the tool; it just never commits an answer in the
+   format the verifier reads). At `Effort: high`, thinking out loud *derails* a
+   0.5B model — 0.96→0.78 on calc, 0.96→0.68 on lookup. RL fixed both ends
+   completely: **accuracy 1.00 at every effort level on both environments**, with
+   per-effort training accuracy all ≈1.0 by step ~150 (`assets/rl_effort.png`,
+   bottom panel).
+
+2. **No token fan-out (the null).** After RL, mean generated tokens are *identical
+   across all four effort levels* — 31.4 on calc, 25.7 on lookup, to the decimal.
+   The tuned policy converged to **one effort-invariant transcript per task**; the
+   effort line has zero effect on the output. The training trace shows why
+   (`rl_effort.png`, top panel): the three per-effort token curves *merge* at
+   ~28–29 tokens by step ~100 instead of fanning out. Mechanism — a GRPO dead
+   zone: once every rollout in a group is correct, policy entropy collapses,
+   sibling rollouts become near-identical, so within-group length variance → 0,
+   the λ·n_gen penalty adds the *same* number to every group member, and the
+   group-relative advantage of being shorter vanishes. The length gradient dies at
+   exactly the moment the task is solved. On top of that, these tasks' optimal
+   transcript is near-minimal at *every* effort (~25–34 tokens: one tool call, one
+   answer) — there was never much length to trade away.
+
+**Headline, stated honestly:** λ-paired effort conditioning delivered **robustness
+repair, not verbosity modulation** — at 0.5B, on tasks whose optimal transcript is
+near-minimal at every effort level. For the dial itself to emerge you need (a)
+tasks where thinking length genuinely buys accuracy (e.g. multi-step arithmetic
+*without* the calculator tool), so different λ prices pick different optima, and
+(b) within-group variance kept alive at convergence (higher sampling temperature
+or an entropy bonus), so the length term keeps producing a gradient after the
+task is solved. That's the follow-up experiment this result motivates.
 
 ### Bonsai ternary
 *(size and perplexity trade-off — `assets/bonsai_ternary.png`, numbers in
