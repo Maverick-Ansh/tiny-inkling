@@ -1,0 +1,15 @@
+{
+  "metric": "self-distribution: 64x256 self-samples (temp 1.0, seed 0); original tokenizer lost -> val-text ppl unavailable (see REPORT)",
+  "params_total": 57609216,
+  "params_ternarized": 54263808,
+  "params_kept_fp16": 3345408,
+  "nll_fp16": 6.7706,
+  "nll_ternary": 8.7858,
+  "ppl_fp16": 871.851,
+  "ppl_ternary": 6540.931,
+  "nll_increase_pct": 29.8,
+  "kl_fp16_to_ternary": 3.9512,
+  "size_fp16_mb": 115.22,
+  "size_ternary_mb": 17.44,
+  "compression_x": 6.61
+}
